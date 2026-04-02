@@ -1,4 +1,7 @@
 {
+  "redirects": [
+    { "source": "/shipment-tracker/", "has": [{ "type": "query", "key": "token", "value": "(?<token>.*)" }], "destination": "/customer/:token", "permanent": true }
+  ],
   "rewrites": [
     { "source": "/(.*)", "destination": "/index.html" }
   ]
