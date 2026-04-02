@@ -678,6 +678,14 @@ type Route =
 
 function parseRoute(): Route {
   const path = window.location.pathname;
+  const params = new URLSearchParams(window.location.search);
+
+  // Handle old /shipment-tracker/?token=X URL
+  if (path.match(/^\/shipment-tracker\/?$/i) && params.get("token")) {
+    const token = params.get("token")!;
+    window.history.replaceState(null, "", `/customer/${encodeURIComponent(token)}`);
+    return { page: "customer", token };
+  }
 
   const customerMatch = path.match(/^\/customer\/(.+)$/i);
   if (customerMatch) return { page: "customer", token: decodeURIComponent(customerMatch[1]) };
