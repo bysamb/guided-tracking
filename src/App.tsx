@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect, useRef } from "react";
 import { Search, Ship, MapPin, Package, Clock, AlertTriangle, Loader2, ArrowLeft, Anchor, Truck } from "lucide-react";
 
 const N8N_WEBHOOK = "https://n8n.srv1361720.hstgr.cloud/webhook/hbl-tracking";
@@ -340,16 +340,25 @@ function ResultsPage({ data, hbl, onBack }: { data: TrackingResponse; hbl: strin
   );
 }
 
+function getHblFromUrl(): string {
+  const path = window.location.pathname;
+  const match = path.match(/^\/tracking\/(.+)$/i);
+  return match ? decodeURIComponent(match[1]).toUpperCase() : "";
+}
+
 export default function App() {
   const [state, setState] = useState<"search" | "loading" | "results" | "error" | "not_found">("search");
   const [data, setData] = useState<TrackingResponse | null>(null);
   const [searchHbl, setSearchHbl] = useState("");
   const [error, setError] = useState("");
 
+  const didAutoSearch = useRef(false);
+
   const handleSearch = async (hbl: string) => {
     setSearchHbl(hbl);
     setState("loading");
     setError("");
+    window.history.replaceState(null, "", `/tracking/${encodeURIComponent(hbl)}`);
 
     try {
       const res = await fetch(`${N8N_WEBHOOK}?hbl=${encodeURIComponent(hbl)}`);
@@ -370,10 +379,19 @@ export default function App() {
     }
   };
 
+  // Auto-search if HBL is in the URL on first load
+  useEffect(() => {
+    if (didAutoSearch.current) return;
+    didAutoSearch.current = true;
+    const urlHbl = getHblFromUrl();
+    if (urlHbl) handleSearch(urlHbl);
+  }, []);
+
   const handleBack = () => {
     setState("search");
     setData(null);
     setSearchHbl("");
+    window.history.replaceState(null, "", "/tracking");
   };
 
   return (
