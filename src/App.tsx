@@ -1,7 +1,10 @@
 import { useState, useEffect, useRef } from "react";
-import { Search, Ship, MapPin, Package, Clock, AlertTriangle, Loader2, ArrowLeft, Anchor, Truck } from "lucide-react";
+import { Search, Ship, MapPin, Package, Clock, AlertTriangle, Loader2, ArrowLeft, Anchor, Truck, ChevronDown } from "lucide-react";
 
-const N8N_WEBHOOK = "https://n8n.srv1361720.hstgr.cloud/webhook/hbl-tracking";
+const N8N_HBL_WEBHOOK = "https://n8n.srv1361720.hstgr.cloud/webhook/hbl-tracking";
+const N8N_CUSTOMER_WEBHOOK = "https://n8n.srv1361720.hstgr.cloud/webhook/customer-shipments";
+
+// ── Shared Types ──
 
 type Shipment = {
   item_id: string;
@@ -69,6 +72,49 @@ type TrackingResponse = {
   };
 };
 
+type CustomerShipment = {
+  item_id: string;
+  name: string;
+  group: string;
+  hbl: string;
+  mbl: string;
+  sq: string;
+  container_number: string;
+  status: string;
+  pol: string;
+  pod: string;
+  destination: string;
+  vessel: string;
+  voyage: string;
+  ssl: string;
+  mode: string;
+  etd: string | null;
+  atd: string | null;
+  eta: string | null;
+  ata: string | null;
+  gate_out: string | null;
+  lfd: string | null;
+  delivery_date: string | null;
+  available_for_pickup: string | null;
+  holds: string | null;
+  last_update: string | null;
+  terminal_location: string | null;
+  empty_return: string | null;
+};
+
+type CustomerResponse = {
+  found: boolean;
+  error?: string;
+  customer: {
+    name: string;
+    email: string;
+  };
+  shipment_count: number;
+  shipments: CustomerShipment[];
+};
+
+// ── Shared Utilities ──
+
 function formatDate(dateStr: string | null | undefined): string {
   if (!dateStr) return "—";
   const d = new Date(dateStr + "T00:00:00");
@@ -80,7 +126,7 @@ function statusColor(status: string): { bg: string; text: string; dot: string } 
   const s = status.toLowerCase();
   if (s.includes("delivered") || s.includes("completed")) return { bg: "bg-green-50", text: "text-green-700", dot: "bg-green-500" };
   if (s.includes("transit")) return { bg: "bg-blue-50", text: "text-blue-700", dot: "bg-blue-500" };
-  if (s.includes("arrived") || s.includes("gated out")) return { bg: "bg-teal-50", text: "text-teal-700", dot: "bg-teal-500" };
+  if (s.includes("arrived") || s.includes("gated out") || s.includes("destination terminal")) return { bg: "bg-teal-50", text: "text-teal-700", dot: "bg-teal-500" };
   if (s.includes("hold")) return { bg: "bg-orange-50", text: "text-orange-700", dot: "bg-orange-500" };
   if (s.includes("canceled")) return { bg: "bg-red-50", text: "text-red-700", dot: "bg-red-500" };
   if (s.includes("pending") || s.includes("booked") || s.includes("awaiting")) return { bg: "bg-amber-50", text: "text-amber-700", dot: "bg-amber-500" };
@@ -91,7 +137,7 @@ function StatusBadge({ status }: { status: string }) {
   if (!status) return null;
   const c = statusColor(status);
   return (
-    <span className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold ${c.bg} ${c.text}`}>
+    <span className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-semibold ${c.bg} ${c.text}`}>
       <span className={`w-1.5 h-1.5 rounded-full ${c.dot}`} />
       {status}
     </span>
@@ -118,6 +164,8 @@ function Card({ title, icon: Icon, children }: { title: string; icon: React.Elem
     </div>
   );
 }
+
+// ── HBL Tracking Components ──
 
 function MilestoneStep({ label, date, completed, active, isLast }: { label: string; date: string; completed: boolean; active: boolean; isLast: boolean }) {
   return (
@@ -232,21 +280,17 @@ function ResultsPage({ data, hbl, onBack }: { data: TrackingResponse; hbl: strin
   return (
     <div className="flex-1 px-4 py-6 sm:py-8">
       <div className="w-full max-w-[720px] mx-auto space-y-5">
-        {/* Header */}
         <div className="flex items-center gap-3">
           <button onClick={onBack} className="p-2 rounded-lg hover:bg-gray-100 transition">
             <ArrowLeft className="w-4 h-4 text-gray-600" />
           </button>
           <div className="flex-1">
-            <h1 className="text-lg font-bold text-[#1B2A4A]">
-              {shipment.hbl || hbl}
-            </h1>
+            <h1 className="text-lg font-bold text-[#1B2A4A]">{shipment.hbl || hbl}</h1>
             <p className="text-xs text-gray-500">{shipment.name}</p>
           </div>
           <StatusBadge status={shipment.status} />
         </div>
 
-        {/* Route summary */}
         <div className="bg-gradient-to-br from-[#1B2A4A] to-[#131F36] rounded-xl p-5 text-white">
           <div className="flex items-center justify-between gap-4">
             <div className="text-center flex-1">
@@ -275,14 +319,12 @@ function ResultsPage({ data, hbl, onBack }: { data: TrackingResponse; hbl: strin
           </div>
         </div>
 
-        {/* Milestones */}
         {(tracking.etd || tracking.atd) && (
           <Card title="Tracking Progress" icon={MapPin}>
             <TrackingMilestones tracking={tracking} shipment={shipment} />
           </Card>
         )}
 
-        {/* Key dates */}
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-5">
           <Card title="Dates" icon={Clock}>
             <InfoRow label="ETD" value={formatDate(tracking.etd)} />
@@ -303,7 +345,6 @@ function ResultsPage({ data, hbl, onBack }: { data: TrackingResponse; hbl: strin
           </Card>
         </div>
 
-        {/* T49 Container details */}
         {t49.found && t49.containers.length > 0 && (
           <Card title="Container Tracking" icon={Truck}>
             {t49.containers.map((c, i) => (
@@ -326,6 +367,158 @@ function ResultsPage({ data, hbl, onBack }: { data: TrackingResponse; hbl: strin
           </Card>
         )}
 
+        <div className="text-center pb-4">
+          <p className="text-xs text-gray-400">
+            Need help? Contact{" "}
+            <a href="mailto:track-trace@guidedimports.com" className="text-[#4CAF50] font-semibold hover:text-[#43A047]">
+              track-trace@guidedimports.com
+            </a>
+          </p>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Customer Portal Components ──
+
+function CustomerPortalPage({ token }: { token: string }) {
+  const [state, setState] = useState<"loading" | "loaded" | "error" | "invalid">("loading");
+  const [data, setData] = useState<CustomerResponse | null>(null);
+  const [error, setError] = useState("");
+  const [showCompleted, setShowCompleted] = useState(false);
+  const [loadingCompleted, setLoadingCompleted] = useState(false);
+  const didLoad = useRef(false);
+
+  const fetchShipments = async (includeCompleted: boolean) => {
+    const url = `${N8N_CUSTOMER_WEBHOOK}?token=${encodeURIComponent(token)}${includeCompleted ? "&include_completed=true" : ""}`;
+    const res = await fetch(url);
+    if (!res.ok) throw new Error(`Request failed (${res.status})`);
+    return await res.json() as CustomerResponse;
+  };
+
+  useEffect(() => {
+    if (didLoad.current) return;
+    didLoad.current = true;
+
+    fetchShipments(false)
+      .then((json) => {
+        if (!json.found) {
+          setState("invalid");
+          return;
+        }
+        setData(json);
+        setState("loaded");
+      })
+      .catch((e) => {
+        setError(e instanceof Error ? e.message : "Something went wrong");
+        setState("error");
+      });
+  }, []);
+
+  const handleShowCompleted = async () => {
+    setLoadingCompleted(true);
+    try {
+      const json = await fetchShipments(true);
+      if (json.found) setData(json);
+      setShowCompleted(true);
+    } catch {
+      // Silently fail -- they still have active shipments
+    }
+    setLoadingCompleted(false);
+  };
+
+  if (state === "loading") {
+    return (
+      <div className="flex-1 flex items-center justify-center">
+        <div className="text-center space-y-3">
+          <Loader2 className="w-8 h-8 text-[#1B2A4A] animate-spin mx-auto" />
+          <p className="text-sm text-gray-500 font-medium">Loading shipments...</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (state === "invalid") {
+    return (
+      <div className="flex-1 flex items-center justify-center px-4">
+        <div className="text-center space-y-4 max-w-sm">
+          <div className="w-14 h-14 rounded-full bg-amber-50 flex items-center justify-center mx-auto">
+            <AlertTriangle className="w-6 h-6 text-amber-500" />
+          </div>
+          <h2 className="text-lg font-bold text-gray-800">Invalid Link</h2>
+          <p className="text-sm text-gray-500">This tracking link is not valid. Please contact your account representative for an updated link.</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (state === "error") {
+    return (
+      <div className="flex-1 flex items-center justify-center px-4">
+        <div className="text-center space-y-4 max-w-sm">
+          <div className="w-14 h-14 rounded-full bg-red-50 flex items-center justify-center mx-auto">
+            <AlertTriangle className="w-6 h-6 text-red-500" />
+          </div>
+          <h2 className="text-lg font-bold text-gray-800">Something Went Wrong</h2>
+          <p className="text-sm text-gray-500">{error}</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (!data) return null;
+
+  const activeShipments = data.shipments.filter((s) => s.group !== "Complete");
+  const completedShipments = data.shipments.filter((s) => s.group === "Complete");
+
+  return (
+    <div className="flex-1 px-4 py-6 sm:py-8">
+      <div className="w-full max-w-[960px] mx-auto space-y-6">
+        {/* Header */}
+        <div className="bg-gradient-to-br from-[#1B2A4A] to-[#131F36] rounded-xl p-6 text-white relative overflow-hidden">
+          <div
+            className="absolute inset-0 opacity-[0.04]"
+            style={{
+              backgroundImage: `radial-gradient(circle at 20% 50%, white 1px, transparent 1px), radial-gradient(circle at 80% 20%, white 1px, transparent 1px)`,
+              backgroundSize: "100px 100px, 80px 80px",
+            }}
+          />
+          <div className="relative">
+            <p className="text-xs font-bold tracking-widest text-gray-400 mb-1">GUIDED IMPORTS</p>
+            <h1 className="text-xl sm:text-2xl font-bold">{data.customer.name}</h1>
+            <p className="text-sm text-gray-300 mt-1">
+              {activeShipments.length} active shipment{activeShipments.length !== 1 ? "s" : ""}
+              {showCompleted && completedShipments.length > 0 && (
+                <span className="text-gray-400"> · {completedShipments.length} completed</span>
+              )}
+            </p>
+          </div>
+        </div>
+
+        {/* Active Shipments */}
+        <ShipmentTable shipments={activeShipments} title="Active Shipments" />
+
+        {/* Completed toggle */}
+        {!showCompleted ? (
+          <div className="text-center">
+            <button
+              onClick={handleShowCompleted}
+              disabled={loadingCompleted}
+              className="inline-flex items-center gap-2 px-5 py-2.5 border border-gray-200 rounded-xl text-sm font-semibold text-gray-600 hover:bg-gray-50 disabled:opacity-50 transition"
+            >
+              {loadingCompleted ? (
+                <Loader2 className="w-4 h-4 animate-spin" />
+              ) : (
+                <ChevronDown className="w-4 h-4" />
+              )}
+              Show Completed Shipments
+            </button>
+          </div>
+        ) : completedShipments.length > 0 ? (
+          <ShipmentTable shipments={completedShipments} title="Completed Shipments" />
+        ) : null}
+
         {/* Footer */}
         <div className="text-center pb-4">
           <p className="text-xs text-gray-400">
@@ -340,17 +533,167 @@ function ResultsPage({ data, hbl, onBack }: { data: TrackingResponse; hbl: strin
   );
 }
 
-function getHblFromUrl(): string {
+function DateCell({ actual, estimated }: { actual: string | null; estimated: string | null }) {
+  if (actual) return <span className="text-xs text-gray-700 font-medium">{formatDate(actual)}</span>;
+  if (estimated) return <span className="text-xs text-gray-500 italic">{formatDate(estimated)}</span>;
+  return <span className="text-xs text-gray-300">—</span>;
+}
+
+function ShipmentRow({ s }: { s: CustomerShipment }) {
+  const [expanded, setExpanded] = useState(false);
+
+  return (
+    <>
+      {/* Desktop row */}
+      <tr
+        className="hidden sm:table-row border-b border-gray-50 hover:bg-gray-50/50 transition cursor-pointer"
+        onClick={() => setExpanded(!expanded)}
+      >
+        <td className="px-5 py-3">
+          <a href={`/tracking/${s.hbl}`} className="text-sm font-bold text-[#1B2A4A] hover:underline" onClick={(e) => e.stopPropagation()}>{s.hbl}</a>
+          <p className="text-xs text-gray-400">{s.sq}</p>
+        </td>
+        <td className="px-3 py-3 text-sm text-gray-700">{s.container_number || "—"}</td>
+        <td className="px-3 py-3"><StatusBadge status={s.status} /></td>
+        <td className="px-3 py-3">
+          <p className="text-xs text-gray-600">{s.pol}</p>
+          <p className="text-xs text-gray-400">{s.destination || s.pod}</p>
+        </td>
+        <td className="px-3 py-3"><DateCell actual={s.atd} estimated={s.etd} /></td>
+        <td className="px-3 py-3"><DateCell actual={s.ata} estimated={s.eta} /></td>
+        <td className="px-3 py-3 text-xs text-gray-700">{s.delivery_date ? formatDate(s.delivery_date) : <span className="text-gray-300">—</span>}</td>
+        <td className="px-3 py-3">
+          <ChevronDown className={`w-3.5 h-3.5 text-gray-400 transition-transform ${expanded ? "rotate-180" : ""}`} />
+        </td>
+      </tr>
+      {/* Desktop expanded */}
+      {expanded && (
+        <tr className="hidden sm:table-row border-b border-gray-100 bg-gray-50/30">
+          <td colSpan={8} className="px-5 py-4">
+            <div className="grid grid-cols-4 gap-x-8 gap-y-1">
+              <InfoRow label="Gate Out" value={formatDate(s.gate_out)} />
+              <InfoRow label="LFD" value={formatDate(s.lfd)} />
+              <InfoRow label="SSL" value={s.ssl || "—"} />
+              <InfoRow label="Mode" value={s.mode || "—"} />
+            </div>
+          </td>
+        </tr>
+      )}
+
+      {/* Mobile card */}
+      <div className="sm:hidden border-b border-gray-100">
+        <div
+          className="px-5 py-4 cursor-pointer hover:bg-gray-50/50 transition"
+          onClick={() => setExpanded(!expanded)}
+        >
+          <div className="flex items-start justify-between gap-3 mb-2">
+            <div>
+              <a href={`/tracking/${s.hbl}`} className="text-sm font-bold text-[#1B2A4A]" onClick={(e) => e.stopPropagation()}>{s.hbl}</a>
+              <p className="text-xs text-gray-400">{s.container_number}</p>
+            </div>
+            <div className="flex items-center gap-2">
+              <StatusBadge status={s.status} />
+              <ChevronDown className={`w-3.5 h-3.5 text-gray-400 transition-transform ${expanded ? "rotate-180" : ""}`} />
+            </div>
+          </div>
+          <div className="flex items-center gap-4 text-xs text-gray-500">
+            <span>{s.pol} → {s.destination || s.pod}</span>
+            <span className="flex items-center gap-1">Dep <DateCell actual={s.atd} estimated={s.etd} /></span>
+            <span className="flex items-center gap-1">Arr <DateCell actual={s.ata} estimated={s.eta} /></span>
+          </div>
+        </div>
+        {expanded && (
+          <div className="px-5 pb-4 bg-gray-50/30">
+            <div className="grid grid-cols-2 gap-x-6">
+              <InfoRow label="Gate Out" value={formatDate(s.gate_out)} />
+              <InfoRow label="LFD" value={formatDate(s.lfd)} />
+              <InfoRow label="Delivery" value={formatDate(s.delivery_date)} />
+              <InfoRow label="SSL" value={s.ssl || "—"} />
+              <InfoRow label="Mode" value={s.mode || "—"} />
+              <InfoRow label="Vessel" value={s.vessel || "—"} />
+            </div>
+          </div>
+        )}
+      </div>
+    </>
+  );
+}
+
+function ShipmentTable({ shipments, title }: { shipments: CustomerShipment[]; title: string }) {
+  if (!shipments.length) {
+    return (
+      <div className="bg-white rounded-xl border border-gray-200/80 shadow-sm p-8 text-center">
+        <p className="text-sm text-gray-400">No {title.toLowerCase()} found.</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="bg-white rounded-xl border border-gray-200/80 shadow-sm shadow-gray-100/50 overflow-hidden">
+      <div className="px-5 py-3.5 border-b border-gray-100 flex items-center gap-2">
+        <Package className="w-4 h-4 text-[#1B2A4A]" />
+        <h3 className="text-sm font-bold text-[#1B2A4A]">{title}</h3>
+        <span className="text-xs text-gray-400 ml-auto">{shipments.length} shipment{shipments.length !== 1 ? "s" : ""}</span>
+      </div>
+
+      {/* Desktop table */}
+      <div className="hidden sm:block overflow-x-auto">
+        <table className="w-full text-left">
+          <thead>
+            <tr className="border-b border-gray-100 text-xs font-semibold text-gray-500 uppercase tracking-wide">
+              <th className="px-5 py-3">HBL</th>
+              <th className="px-3 py-3">Container</th>
+              <th className="px-3 py-3">Status</th>
+              <th className="px-3 py-3">Route</th>
+              <th className="px-3 py-3">Departure</th>
+              <th className="px-3 py-3">Arrival</th>
+              <th className="px-3 py-3">Delivery</th>
+              <th className="px-3 py-3 w-10"></th>
+            </tr>
+          </thead>
+          <tbody>
+            {shipments.map((s) => (
+              <ShipmentRow key={s.item_id} s={s} />
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      {/* Mobile cards */}
+      <div className="sm:hidden">
+        {shipments.map((s) => (
+          <ShipmentRow key={s.item_id} s={s} />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// ── Router ──
+
+type Route =
+  | { page: "search" }
+  | { page: "tracking"; hbl: string }
+  | { page: "customer"; token: string };
+
+function parseRoute(): Route {
   const path = window.location.pathname;
-  const match = path.match(/^\/tracking\/(.+)$/i);
-  return match ? decodeURIComponent(match[1]).toUpperCase() : "";
+
+  const customerMatch = path.match(/^\/customer\/(.+)$/i);
+  if (customerMatch) return { page: "customer", token: decodeURIComponent(customerMatch[1]) };
+
+  const trackingMatch = path.match(/^\/tracking\/(.+)$/i);
+  if (trackingMatch) return { page: "tracking", hbl: decodeURIComponent(trackingMatch[1]).toUpperCase() };
+
+  return { page: "search" };
 }
 
 export default function App() {
-  const [state, setState] = useState<"search" | "loading" | "results" | "error" | "not_found">("search");
+  const [state, setState] = useState<"search" | "loading" | "results" | "error" | "not_found" | "customer">("search");
   const [data, setData] = useState<TrackingResponse | null>(null);
   const [searchHbl, setSearchHbl] = useState("");
   const [error, setError] = useState("");
+  const [customerToken, setCustomerToken] = useState("");
 
   const didAutoSearch = useRef(false);
 
@@ -361,7 +704,7 @@ export default function App() {
     window.history.replaceState(null, "", `/tracking/${encodeURIComponent(hbl)}`);
 
     try {
-      const res = await fetch(`${N8N_WEBHOOK}?hbl=${encodeURIComponent(hbl)}`);
+      const res = await fetch(`${N8N_HBL_WEBHOOK}?hbl=${encodeURIComponent(hbl)}`);
       if (!res.ok) throw new Error(`Request failed (${res.status})`);
 
       const json: TrackingResponse = await res.json();
@@ -379,12 +722,17 @@ export default function App() {
     }
   };
 
-  // Auto-search if HBL is in the URL on first load
   useEffect(() => {
     if (didAutoSearch.current) return;
     didAutoSearch.current = true;
-    const urlHbl = getHblFromUrl();
-    if (urlHbl) handleSearch(urlHbl);
+
+    const route = parseRoute();
+    if (route.page === "tracking") {
+      handleSearch(route.hbl);
+    } else if (route.page === "customer") {
+      setCustomerToken(route.token);
+      setState("customer");
+    }
   }, []);
 
   const handleBack = () => {
@@ -409,6 +757,10 @@ export default function App() {
 
       {state === "results" && data && (
         <ResultsPage data={data} hbl={searchHbl} onBack={handleBack} />
+      )}
+
+      {state === "customer" && customerToken && (
+        <CustomerPortalPage token={customerToken} />
       )}
 
       {state === "not_found" && (
