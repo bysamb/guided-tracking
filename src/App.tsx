@@ -277,6 +277,15 @@ function SearchPage({ onSearch }: { onSearch: (hbl: string) => void }) {
 function ResultsPage({ data, hbl, onBack }: { data: TrackingResponse; hbl: string; onBack: () => void }) {
   const { shipment, tracking, t49 } = data;
 
+  // The Monday Tracking board is now the deduplicated canonical source (owned by
+  // the new tracking service). The raw Terminal49 DataSync sheet below is NOT
+  // deduplicated: a re-booked container has several T49 objects sharing one HBL,
+  // and the lookup can surface a stale/dead one (e.g. an old ETA the customer
+  // misreads as an arrival). So when Monday has tracking data, trust it and
+  // suppress the raw T49 block; only fall back to that block when Monday has no
+  // tracking at all, so a shipment missing its board link still shows something.
+  const hasMondayTracking = !!(tracking.etd || tracking.atd || tracking.eta || tracking.ata);
+
   return (
     <div className="flex-1 px-4 py-6 sm:py-8">
       <div className="w-full max-w-[720px] mx-auto space-y-5">
@@ -345,7 +354,7 @@ function ResultsPage({ data, hbl, onBack }: { data: TrackingResponse; hbl: strin
           </Card>
         </div>
 
-        {t49.found && t49.containers.length > 0 && (
+        {!hasMondayTracking && t49.found && t49.containers.length > 0 && (
           <Card title="Container Tracking" icon={Truck}>
             {t49.containers.map((c, i) => (
               <div key={i} className={i > 0 ? "mt-4 pt-4 border-t border-gray-100" : ""}>
