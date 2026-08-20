@@ -122,6 +122,66 @@ function formatDate(dateStr: string | null | undefined): string {
   return d.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
 }
 
+const REQUEST_TIMEOUT_MS = 15000;
+
+// n8n answers in ~3s normally, but a stalled workflow used to leave the page
+// spinning forever with no way out. Time out, retry once, and surface a real
+// message instead.
+async function fetchJson<T>(url: string): Promise<T> {
+  let lastError: Error = new Error("Something went wrong");
+
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      const res = await fetch(url, { signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS) });
+
+      // Client errors are deterministic — retrying only delays the message.
+      if (res.status >= 400 && res.status < 500) {
+        throw Object.assign(new Error(`Request failed (${res.status})`), { final: true });
+      }
+      if (!res.ok) throw new Error(`Request failed (${res.status})`);
+
+      // A failing workflow can answer 200 with an empty body, which makes
+      // res.json() throw a parse error that reads like a bug in this page.
+      const text = await res.text();
+      if (!text.trim()) throw new Error("The tracking service returned an empty response.");
+
+      try {
+        return JSON.parse(text) as T;
+      } catch {
+        throw new Error("The tracking service returned an unreadable response.");
+      }
+    } catch (e) {
+      const err = e instanceof Error ? e : new Error(String(e));
+      lastError =
+        err.name === "TimeoutError"
+          ? new Error("The tracking service took too long to respond.")
+          : err;
+
+      if ((err as { final?: boolean }).final) break;
+      if (attempt === 0) await new Promise((r) => setTimeout(r, 1200));
+    }
+  }
+
+  throw lastError;
+}
+
+const STALE_AFTER_HOURS = 48;
+
+function freshness(lastUpdate: string | null | undefined): { label: string; stale: boolean } | null {
+  if (!lastUpdate) return null;
+  const d = new Date(lastUpdate + "T00:00:00");
+  if (isNaN(d.getTime())) return null;
+
+  const hours = (Date.now() - d.getTime()) / 36e5;
+  if (hours < 24) return { label: "Updated today", stale: false };
+
+  const days = Math.floor(hours / 24);
+  return {
+    label: `Updated ${days} day${days === 1 ? "" : "s"} ago`,
+    stale: hours > STALE_AFTER_HOURS,
+  };
+}
+
 function statusColor(status: string): { bg: string; text: string; dot: string } {
   const s = status.toLowerCase();
   if (s.includes("delivered") || s.includes("completed")) return { bg: "bg-green-50", text: "text-green-700", dot: "bg-green-500" };
@@ -166,6 +226,64 @@ function Card({ title, icon: Icon, children }: { title: string; icon: React.Elem
 }
 
 // ── HBL Tracking Components ──
+
+function TrackingStatusNote({ tracking }: { tracking: Tracking }) {
+  const hasAny = !!(
+    tracking.etd || tracking.atd || tracking.eta || tracking.ata ||
+    tracking.gate_out || tracking.delivery_date || tracking.last_update
+  );
+
+  // An upstream API failure is swallowed by the workflow and arrives here as an
+  // empty tracking object. Say so, rather than rendering a page full of em
+  // dashes as though the shipment genuinely has no milestones yet.
+  if (!hasAny) {
+    return (
+      <div className="flex items-start gap-2 px-3 py-2.5 rounded-lg bg-amber-50 border border-amber-200">
+        <AlertTriangle className="w-3.5 h-3.5 text-amber-600 shrink-0 mt-0.5" />
+        <p className="text-xs text-amber-800">
+          We couldn't load live tracking for this shipment just now. The details below may be
+          incomplete — please refresh, or contact us if it keeps happening.
+        </p>
+      </div>
+    );
+  }
+
+  // A delivered shipment legitimately stops updating, so age is not a warning
+  // sign once the container is out and the empty is returned — only flag
+  // staleness while the shipment is still in motion.
+  const settled = !!(tracking.delivery_date || tracking.empty_return);
+  const raw = freshness(tracking.last_update);
+  const f = raw && settled ? { ...raw, stale: false } : raw;
+
+  if (!f) {
+    return (
+      <div className="flex items-start gap-2 px-3 py-2.5 rounded-lg bg-gray-50 border border-gray-200">
+        <Clock className="w-3.5 h-3.5 text-gray-400 shrink-0 mt-0.5" />
+        <p className="text-xs text-gray-500">
+          We don't have an update time for this shipment, so these dates may have changed.
+        </p>
+      </div>
+    );
+  }
+
+  return (
+    <div
+      className={`flex items-start gap-2 px-3 py-2.5 rounded-lg border ${
+        f.stale ? "bg-amber-50 border-amber-200" : "bg-gray-50 border-gray-200"
+      }`}
+    >
+      {f.stale ? (
+        <AlertTriangle className="w-3.5 h-3.5 text-amber-600 shrink-0 mt-0.5" />
+      ) : (
+        <Clock className="w-3.5 h-3.5 text-gray-400 shrink-0 mt-0.5" />
+      )}
+      <p className={`text-xs ${f.stale ? "text-amber-800" : "text-gray-500"}`}>
+        <span className="font-semibold">{f.label}</span> · {formatDate(tracking.last_update)}
+        {f.stale && " — this shipment hasn't updated recently, so these dates may have changed."}
+      </p>
+    </div>
+  );
+}
 
 function MilestoneStep({ label, date, completed, active, isLast }: { label: string; date: string; completed: boolean; active: boolean; isLast: boolean }) {
   return (
@@ -328,6 +446,8 @@ function ResultsPage({ data, hbl, onBack }: { data: TrackingResponse; hbl: strin
           </div>
         </div>
 
+        <TrackingStatusNote tracking={tracking} />
+
         {(tracking.etd || tracking.atd) && (
           <Card title="Tracking Progress" icon={MapPin}>
             <TrackingMilestones tracking={tracking} shipment={shipment} />
@@ -401,9 +521,7 @@ function CustomerPortalPage({ token }: { token: string }) {
 
   const fetchShipments = async (includeCompleted: boolean) => {
     const url = `${N8N_CUSTOMER_WEBHOOK}?token=${encodeURIComponent(token)}${includeCompleted ? "&include_completed=true" : ""}`;
-    const res = await fetch(url);
-    if (!res.ok) throw new Error(`Request failed (${res.status})`);
-    return await res.json() as CustomerResponse;
+    return await fetchJson<CustomerResponse>(url);
   };
 
   useEffect(() => {
@@ -721,10 +839,9 @@ export default function App() {
     window.history.replaceState(null, "", `/tracking/${encodeURIComponent(hbl)}`);
 
     try {
-      const res = await fetch(`${N8N_HBL_WEBHOOK}?hbl=${encodeURIComponent(hbl)}`);
-      if (!res.ok) throw new Error(`Request failed (${res.status})`);
-
-      const json: TrackingResponse = await res.json();
+      const json = await fetchJson<TrackingResponse>(
+        `${N8N_HBL_WEBHOOK}?hbl=${encodeURIComponent(hbl)}`
+      );
 
       if (!json.found) {
         setState("not_found");
