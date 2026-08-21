@@ -167,6 +167,17 @@ async function fetchJson<T>(url: string): Promise<T> {
 
 const STALE_AFTER_HOURS = 48;
 
+// The Tracking board records a gate-out or empty-return without touching
+// last_update on ~26% of shipments, so last_update alone understates freshness.
+// Use the most recent milestone we actually know about. ISO date strings sort
+// lexicographically, so a plain string compare is safe here.
+function effectiveUpdate(t: Tracking): string {
+  const valid = (d: string | null | undefined): d is string =>
+    !!d && !isNaN(new Date(d + "T00:00:00").getTime());
+  const candidates = [t.last_update, t.gate_out, t.empty_return, t.delivery_date].filter(valid);
+  return candidates.length ? candidates.reduce((a, b) => (a > b ? a : b)) : "";
+}
+
 function freshness(lastUpdate: string | null | undefined): { label: string; stale: boolean } | null {
   if (!lastUpdate) return null;
   const d = new Date(lastUpdate + "T00:00:00");
@@ -252,7 +263,8 @@ function TrackingStatusNote({ tracking }: { tracking: Tracking }) {
   // sign once the container is out and the empty is returned — only flag
   // staleness while the shipment is still in motion.
   const settled = !!(tracking.delivery_date || tracking.empty_return);
-  const raw = freshness(tracking.last_update);
+  const asOf = effectiveUpdate(tracking);
+  const raw = freshness(asOf);
   const f = raw && settled ? { ...raw, stale: false } : raw;
 
   if (!f) {
@@ -278,7 +290,7 @@ function TrackingStatusNote({ tracking }: { tracking: Tracking }) {
         <Clock className="w-3.5 h-3.5 text-gray-400 shrink-0 mt-0.5" />
       )}
       <p className={`text-xs ${f.stale ? "text-amber-800" : "text-gray-500"}`}>
-        <span className="font-semibold">{f.label}</span> · {formatDate(tracking.last_update)}
+        <span className="font-semibold">{f.label}</span> · {formatDate(asOf)}
         {f.stale && " — this shipment hasn't updated recently, so these dates may have changed."}
       </p>
     </div>
