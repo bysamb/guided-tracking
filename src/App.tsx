@@ -244,10 +244,34 @@ function TrackingStatusNote({ tracking }: { tracking: Tracking }) {
     tracking.gate_out || tracking.delivery_date || tracking.last_update
   );
 
-  // An upstream API failure is swallowed by the workflow and arrives here as an
-  // empty tracking object. Say so, rather than rendering a page full of em
-  // dashes as though the shipment genuinely has no milestones yet.
+  // No milestones at all has two very different causes, and conflating them told
+  // customers that working shipments were broken:
+  //
+  //   method 'Manual'  — tracked by hand, because the consolidator won't release a
+  //                      master bill and Terminal49 cannot register a house bill.
+  //                      Dates appear when someone enters them. Nothing is wrong.
+  //   method 'Pending' — tracking hasn't started yet.
+  //   anything else    — a T49-tracked shipment with no milestones, or a method we
+  //                      couldn't read. That does suggest a real upstream failure.
+  //
+  // Only the last case is ours. Telling a customer to refresh and contact us about
+  // a correctly-recorded manual shipment manufactures a support ticket.
   if (!hasAny) {
+    const method = (tracking.method || "").trim().toLowerCase();
+
+    if (method === "manual" || method === "pending") {
+      return (
+        <div className="flex items-start gap-2 px-3 py-2.5 rounded-lg bg-gray-50 border border-gray-200">
+          <Clock className="w-3.5 h-3.5 text-gray-400 shrink-0 mt-0.5" />
+          <p className="text-xs text-gray-500">
+            {method === "manual"
+              ? "This shipment is tracked manually, so milestone dates appear here once they're confirmed rather than updating automatically."
+              : "Tracking hasn't started for this shipment yet. Milestone dates will appear here once it's underway."}
+          </p>
+        </div>
+      );
+    }
+
     return (
       <div className="flex items-start gap-2 px-3 py-2.5 rounded-lg bg-amber-50 border border-amber-200">
         <AlertTriangle className="w-3.5 h-3.5 text-amber-600 shrink-0 mt-0.5" />
