@@ -31,6 +31,12 @@ type Tracking = {
   atd: string;
   eta: string;
   ata: string;
+  // Inland leg (Tracking board date_mm2aghqe / date_mm2ahqnp). Present only
+  // for shipments routed onward past the POD; "" otherwise. Field names match
+  // what the canonical record calls destination_eta / destination_ata, so the
+  // future Neon-backed endpoint can keep the same contract.
+  inland_eta: string;
+  inland_ata: string;
   gate_out: string;
   lfd: string;
   available_for_pickup: string | null;
@@ -174,7 +180,7 @@ const STALE_AFTER_HOURS = 48;
 function effectiveUpdate(t: Tracking): string {
   const valid = (d: string | null | undefined): d is string =>
     !!d && !isNaN(new Date(d + "T00:00:00").getTime());
-  const candidates = [t.last_update, t.gate_out, t.empty_return, t.delivery_date].filter(valid);
+  const candidates = [t.last_update, t.gate_out, t.empty_return, t.delivery_date, t.inland_ata].filter(valid);
   return candidates.length ? candidates.reduce((a, b) => (a > b ? a : b)) : "";
 }
 
@@ -336,11 +342,49 @@ function MilestoneStep({ label, date, completed, active, isLast }: { label: stri
   );
 }
 
+// A shipment routed onward past the POD (e.g. Long Beach then Chicago). Both
+// halves matter: the dates can arrive before the destination is filled in, and
+// the destination can be known before any inland date exists.
+function hasInlandLeg(tracking: Tracking, shipment: Shipment): boolean {
+  const routedOnward = !!shipment.destination && shipment.destination !== shipment.pod;
+  return routedOnward || !!(tracking.inland_eta || tracking.inland_ata);
+}
+
 function TrackingMilestones({ tracking, shipment }: { tracking: Tracking; shipment: Shipment }) {
+  const inland = hasInlandLeg(tracking, shipment);
+
+  // ORDERING CAVEAT, deliberate: the inland arrival is placed BEFORE Gate Out.
+  // That is correct for a rail move (the container rides to the destination
+  // ramp and gates out there) and wrong for a truck move (it gates out at the
+  // POD and is then trucked). We cannot tell which from the data: the Tracking
+  // board carries no per-leg mode, and the Master Shipment "Mode of Transport"
+  // field is not reliable enough to branch on. Rail is the common case for the
+  // long POD-to-inland lanes this applies to, so one order is picked and stated
+  // rather than guessed at per shipment.
   const milestones = [
     { label: "Departed Origin", date: formatDate(tracking.atd || tracking.etd), completed: !!tracking.atd, active: !tracking.atd && !!tracking.etd },
-    { label: `Arrived at ${shipment.pod || "POD"}`, date: formatDate(tracking.ata || tracking.eta), completed: !!tracking.ata, active: !!tracking.atd && !tracking.ata },
-    { label: "Gate Out", date: formatDate(tracking.gate_out), completed: !!tracking.gate_out, active: !!tracking.ata && !tracking.gate_out },
+    {
+      label: inland ? `Arrived at ${shipment.pod || "POD"} (port)` : `Arrived at ${shipment.pod || "POD"}`,
+      date: formatDate(tracking.ata || tracking.eta),
+      completed: !!tracking.ata,
+      active: !!tracking.atd && !tracking.ata,
+    },
+    ...(inland
+      ? [{
+          label: `Arrived at ${shipment.destination || "Destination"}`,
+          date: formatDate(tracking.inland_ata || tracking.inland_eta),
+          completed: !!tracking.inland_ata,
+          active: !!tracking.ata && !tracking.inland_ata,
+        }]
+      : []),
+    {
+      label: "Gate Out",
+      date: formatDate(tracking.gate_out),
+      completed: !!tracking.gate_out,
+      // On an inland move the gate-out is at the destination ramp, so it only
+      // becomes the live step once the container has arrived there.
+      active: inland ? !!tracking.inland_ata && !tracking.gate_out : !!tracking.ata && !tracking.gate_out,
+    },
     { label: "Delivered", date: formatDate(tracking.delivery_date), completed: !!tracking.delivery_date, active: !!tracking.gate_out && !tracking.delivery_date },
   ];
 
@@ -494,9 +538,18 @@ function ResultsPage({ data, hbl, onBack }: { data: TrackingResponse; hbl: strin
           <Card title="Dates" icon={Clock}>
             <InfoRow label="ETD" value={formatDate(tracking.etd)} />
             <InfoRow label="ATD" value={formatDate(tracking.atd)} />
-            <InfoRow label="ETA" value={formatDate(tracking.eta)} />
-            <InfoRow label="ATA" value={formatDate(tracking.ata)} />
-            {tracking.lfd && <InfoRow label="Last Free Day" value={formatDate(tracking.lfd)} />}
+            <InfoRow label={hasInlandLeg(tracking, shipment) ? "ETA (port)" : "ETA"} value={formatDate(tracking.eta)} />
+            <InfoRow label={hasInlandLeg(tracking, shipment) ? "ATA (port)" : "ATA"} value={formatDate(tracking.ata)} />
+            {tracking.inland_eta && <InfoRow label={`ETA ${shipment.destination || "Destination"}`} value={formatDate(tracking.inland_eta)} />}
+            {tracking.inland_ata && <InfoRow label={`ATA ${shipment.destination || "Destination"}`} value={formatDate(tracking.inland_ata)} />}
+            {/* The Last Free Day we hold is the POD's. For a container routed
+                onward it is not the customer's deadline, and showing it invites
+                exactly the wrong action, so it is withheld until the container
+                has actually arrived at the destination. Same rule as NOTIF-03
+                applies to the LFD emails. */}
+            {tracking.lfd && !(hasInlandLeg(tracking, shipment) && !tracking.inland_ata) && (
+              <InfoRow label="Last Free Day" value={formatDate(tracking.lfd)} />
+            )}
             {tracking.delivery_date && <InfoRow label="Delivery" value={formatDate(tracking.delivery_date)} />}
           </Card>
 
