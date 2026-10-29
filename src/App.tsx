@@ -342,12 +342,34 @@ function MilestoneStep({ label, date, completed, active, isLast }: { label: stri
   );
 }
 
+// Place names on the board are typed by hand, so the same port shows up as
+// "Oakland" and "OAKLAND,CA" on sibling rows. Lower-case, drop a trailing
+// ",<region>" token, and collapse whitespace before comparing. Mirrors
+// notify/place-match.ts normalizePlace in the n8n-docs service; the single
+// list page must not call a shipment inland because of a spelling.
+function normalizePlace(raw: string | null | undefined): string | null {
+  if (!raw) return null;
+  let s = raw.trim().toLowerCase();
+  const lastComma = s.lastIndexOf(",");
+  if (lastComma !== -1) s = s.slice(0, lastComma).trim();
+  s = s.replace(/\.+$/, "").trim().replace(/\s+/g, " ");
+  return s === "" ? null : s;
+}
+
+// A destination that is a different place from the POD. Absence is never
+// "same place": with no destination there is no inland signal from the names.
+function routedOnward(destination: string | null | undefined, pod: string | null | undefined): boolean {
+  const d = normalizePlace(destination);
+  if (d === null) return false;
+  const p = normalizePlace(pod);
+  return p === null || d !== p;
+}
+
 // A shipment routed onward past the POD (e.g. Long Beach then Chicago). Both
 // halves matter: the dates can arrive before the destination is filled in, and
 // the destination can be known before any inland date exists.
 function hasInlandLeg(tracking: Tracking, shipment: Shipment): boolean {
-  const routedOnward = !!shipment.destination && shipment.destination !== shipment.pod;
-  return routedOnward || !!(tracking.inland_eta || tracking.inland_ata);
+  return routedOnward(shipment.destination, shipment.pod) || !!(tracking.inland_eta || tracking.inland_ata);
 }
 
 function TrackingMilestones({ tracking, shipment }: { tracking: Tracking; shipment: Shipment }) {
@@ -542,11 +564,13 @@ function ResultsPage({ data, hbl, onBack }: { data: TrackingResponse; hbl: strin
             <InfoRow label={hasInlandLeg(tracking, shipment) ? "ATA (port)" : "ATA"} value={formatDate(tracking.ata)} />
             {tracking.inland_eta && <InfoRow label={`ETA ${shipment.destination || "Destination"}`} value={formatDate(tracking.inland_eta)} />}
             {tracking.inland_ata && <InfoRow label={`ATA ${shipment.destination || "Destination"}`} value={formatDate(tracking.inland_ata)} />}
-            {/* The Last Free Day we hold is the POD's. For a container routed
-                onward it is not the customer's deadline, and showing it invites
-                exactly the wrong action, so it is withheld until the container
-                has actually arrived at the destination. Same rule as NOTIF-03
-                applies to the LFD emails. */}
+            {/* The Last Free Day we hold is usually the POD's; on a rail move it
+                can be the inland ramp's, but the lookup carries no scope to tell
+                them apart. For a container routed onward the POD's deadline is
+                not the customer's, and showing it invites exactly the wrong
+                action, so it is withheld until the container has actually
+                arrived at the destination. Same rule as NOTIF-03 applies to the
+                LFD emails. */}
             {tracking.lfd && !(hasInlandLeg(tracking, shipment) && !tracking.inland_ata) && (
               <InfoRow label="Last Free Day" value={formatDate(tracking.lfd)} />
             )}
@@ -757,6 +781,12 @@ function DateCell({ actual, estimated }: { actual: string | null; estimated: str
 
 function ShipmentRow({ s }: { s: CustomerShipment }) {
   const [expanded, setExpanded] = useState(false);
+  // The list endpoint carries no inland arrival date and no LFD scope, so it
+  // cannot tell a port deadline from the rail ramp's. On a shipment routed
+  // onward the LFD we hold is usually the port's, which is not the customer's
+  // deadline, so the list withholds it; the shipment page (linked from the
+  // HBL) shows it once the container has arrived at the destination.
+  const showLfd = !routedOnward(s.destination, s.pod);
 
   return (
     <>
@@ -788,7 +818,7 @@ function ShipmentRow({ s }: { s: CustomerShipment }) {
           <td colSpan={8} className="px-5 py-4">
             <div className="grid grid-cols-4 gap-x-8 gap-y-1">
               <InfoRow label="Gate Out" value={formatDate(s.gate_out)} />
-              <InfoRow label="LFD" value={formatDate(s.lfd)} />
+              {showLfd && <InfoRow label="LFD" value={formatDate(s.lfd)} />}
               <InfoRow label="SSL" value={s.ssl || "—"} />
               <InfoRow label="Mode" value={s.mode || "—"} />
             </div>
@@ -822,7 +852,7 @@ function ShipmentRow({ s }: { s: CustomerShipment }) {
           <div className="px-5 pb-4 bg-gray-50/30">
             <div className="grid grid-cols-2 gap-x-6">
               <InfoRow label="Gate Out" value={formatDate(s.gate_out)} />
-              <InfoRow label="LFD" value={formatDate(s.lfd)} />
+              {showLfd && <InfoRow label="LFD" value={formatDate(s.lfd)} />}
               <InfoRow label="Delivery" value={formatDate(s.delivery_date)} />
               <InfoRow label="SSL" value={s.ssl || "—"} />
               <InfoRow label="Mode" value={s.mode || "—"} />
