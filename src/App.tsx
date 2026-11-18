@@ -210,6 +210,30 @@ function statusColor(status: string): { bg: string; text: string; dot: string } 
   return { bg: "bg-gray-50", text: "text-gray-700", dot: "bg-gray-400" };
 }
 
+// The board's Shipment Status column is not kept current automatically, so a
+// container that has already reached port can still read "In Transit (Ocean)".
+// Only early-stage labels are corrected, and only from a milestone that has
+// actually happened. Any later label a person set is shown exactly as written.
+const EARLY_STATUSES = ["booked", "awaiting departure", "at origin cfs", "in transit (ocean)"];
+
+function hasHappened(date: string | null | undefined): boolean {
+  if (!date) return false;
+  const t = new Date(date + "T00:00:00").getTime();
+  return !isNaN(t) && t <= Date.now();
+}
+
+function displayStatus(
+  status: string,
+  dates: { atd?: string | null; ata?: string | null; inland_ata?: string | null; gate_out?: string | null },
+): string {
+  if (!EARLY_STATUSES.includes((status || "").trim().toLowerCase())) return status;
+  if (hasHappened(dates.gate_out)) return "Gated Out";
+  if (hasHappened(dates.inland_ata)) return "At Destination Terminal";
+  if (hasHappened(dates.ata)) return "Arrived at Port";
+  if (hasHappened(dates.atd)) return "In Transit (Ocean)";
+  return status;
+}
+
 function StatusBadge({ status }: { status: string }) {
   if (!status) return null;
   const c = statusColor(status);
@@ -517,7 +541,7 @@ function ResultsPage({ data, hbl, onBack }: { data: TrackingResponse; hbl: strin
             <h1 className="text-lg font-bold text-[#1B2A4A]">{shipment.hbl || hbl}</h1>
             <p className="text-xs text-gray-500">{shipment.name}</p>
           </div>
-          <StatusBadge status={shipment.status} />
+          <StatusBadge status={displayStatus(shipment.status, tracking)} />
         </div>
 
         <div className="bg-gradient-to-br from-[#1B2A4A] to-[#131F36] rounded-xl p-5 text-white">
@@ -800,7 +824,7 @@ function ShipmentRow({ s }: { s: CustomerShipment }) {
           <p className="text-xs text-gray-400">{s.sq}</p>
         </td>
         <td className="px-3 py-3 text-sm text-gray-700">{s.container_number || "—"}</td>
-        <td className="px-3 py-3"><StatusBadge status={s.status} /></td>
+        <td className="px-3 py-3"><StatusBadge status={displayStatus(s.status, s)} /></td>
         <td className="px-3 py-3">
           <p className="text-xs text-gray-600">{s.pol}</p>
           <p className="text-xs text-gray-400">{s.destination || s.pod}</p>
@@ -838,7 +862,7 @@ function ShipmentRow({ s }: { s: CustomerShipment }) {
               <p className="text-xs text-gray-400">{s.container_number}</p>
             </div>
             <div className="flex items-center gap-2">
-              <StatusBadge status={s.status} />
+              <StatusBadge status={displayStatus(s.status, s)} />
               <ChevronDown className={`w-3.5 h-3.5 text-gray-400 transition-transform ${expanded ? "rotate-180" : ""}`} />
             </div>
           </div>
