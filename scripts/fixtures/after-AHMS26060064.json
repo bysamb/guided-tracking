@@ -1,0 +1,66 @@
+{
+ "status": "tracked",
+ "hbl": "AHMS26060064",
+ "route": {
+  "origin": "Yantian",
+  "port": "Long Beach",
+  "destination": "Chicago",
+  "inland": true
+ },
+ "vessel": "MSC MONICA CRISTINA",
+ "voyage": "FV622N",
+ "carrier": "Mediterranean Shipping Company (MSC)",
+ "containers": [
+  "MEDU7122385"
+ ],
+ "milestones": [
+  {
+   "key": "departed_origin",
+   "label": "Departed Origin",
+   "date_display": "Jun 15, 2026",
+   "date_local": "2026-06-15",
+   "actual": true
+  },
+  {
+   "key": "arrived_port",
+   "label": "Arrived at Long Beach (port)",
+   "date_display": "Jun 30, 2026",
+   "date_local": "2026-06-30",
+   "actual": true
+  },
+  {
+   "key": "arrived_destination",
+   "label": "Arrived at Chicago",
+   "date_display": "Jul 9, 2026",
+   "date_local": "2026-07-09",
+   "actual": true
+  },
+  {
+   "key": "gate_out",
+   "label": "Gate Out",
+   "date_display": "Jul 12, 2026",
+   "date_local": "2026-07-12",
+   "actual": true
+  },
+  {
+   "key": "empty_returned",
+   "label": "Empty Returned",
+   "date_display": null,
+   "date_local": null,
+   "actual": false
+  }
+ ],
+ "details": {
+  "last_free_day": {
+   "date_display": "Jul 12, 2026",
+   "place": "Chicago"
+  },
+  "available_for_pickup": null,
+  "holds": [],
+  "terminal_location": null
+ },
+ "updated": {
+  "date_display": "Jul 12, 2026",
+  "date_local": "2026-07-12"
+ }
+}
