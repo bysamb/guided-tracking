@@ -1,0 +1,51 @@
+{
+ "status": "tracked",
+ "hbl": "AHMS26070072",
+ "route": {
+  "origin": "",
+  "port": "",
+  "destination": null,
+  "inland": false
+ },
+ "vessel": null,
+ "voyage": null,
+ "carrier": null,
+ "containers": [],
+ "milestones": [
+  {
+   "key": "departed_origin",
+   "label": "Departed Origin",
+   "date_display": null,
+   "date_local": null,
+   "actual": false
+  },
+  {
+   "key": "arrived_port",
+   "label": "Arrived at port",
+   "date_display": "Sep 11, 2026",
+   "date_local": "2026-09-11",
+   "actual": false
+  },
+  {
+   "key": "gate_out",
+   "label": "Gate Out",
+   "date_display": null,
+   "date_local": null,
+   "actual": false
+  },
+  {
+   "key": "empty_returned",
+   "label": "Empty Returned",
+   "date_display": null,
+   "date_local": null,
+   "actual": false
+  }
+ ],
+ "details": {
+  "last_free_day": null,
+  "available_for_pickup": null,
+  "holds": null,
+  "terminal_location": null
+ },
+ "updated": null
+}

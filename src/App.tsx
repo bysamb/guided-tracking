@@ -1,82 +1,15 @@
 import { useState, useEffect, useRef } from "react";
-import { Search, Ship, MapPin, Package, Clock, AlertTriangle, Loader2, ArrowLeft, Anchor, Truck, ChevronDown } from "lucide-react";
+import { Search, Ship, MapPin, Package, Clock, AlertTriangle, Loader2, ArrowLeft, Anchor, ChevronDown } from "lucide-react";
+import type { LookupResult, TrackedResponse, TrackingAnswer, TrackingMilestone } from "./trackingContract";
 
-const N8N_HBL_WEBHOOK = "https://n8n.srv1361720.hstgr.cloud/webhook/hbl-tracking";
+// The shipment page reads the Neon-backed API directly (phase 21). The default is
+// production so behaviour never depends on an env var being set; VITE_TRACKING_API
+// exists only so render-check can point the built page at a local stub.
+const TRACKING_API: string =
+  (import.meta.env.VITE_TRACKING_API as string | undefined) || "https://n8n-docs-blond.vercel.app/api/customer-tracking";
 const N8N_CUSTOMER_WEBHOOK = "https://n8n.srv1361720.hstgr.cloud/webhook/customer-shipments";
 
 // ── Shared Types ──
-
-type Shipment = {
-  item_id: string;
-  name: string;
-  group: string;
-  hbl: string;
-  mbl: string;
-  sq: string;
-  container_number: string;
-  status: string;
-  pol: string;
-  pod: string;
-  destination: string;
-  vessel: string;
-  voyage: string;
-  ssl: string;
-  incoterm: string;
-  mode: string;
-};
-
-type Tracking = {
-  method: string | null;
-  etd: string;
-  atd: string;
-  eta: string;
-  ata: string;
-  // Inland leg (Tracking board date_mm2aghqe / date_mm2ahqnp). Present only
-  // for shipments routed onward past the POD; "" otherwise. Field names match
-  // what the canonical record calls destination_eta / destination_ata, so the
-  // future Neon-backed endpoint can keep the same contract.
-  inland_eta: string;
-  inland_ata: string;
-  gate_out: string;
-  lfd: string;
-  available_for_pickup: string | null;
-  holds: string | null;
-  terminal_location: string;
-  delivery_date: string;
-  empty_return: string;
-  last_update: string;
-  notes: string;
-};
-
-type Container = {
-  container_number: string;
-  equipment: string;
-  equipment_type: string;
-  equipment_length: string;
-  weight_in_lbs: string;
-  pol_atd_at: string;
-  pod_eta_at: string;
-  pod_arrived_at: string;
-  pod_discharged_at: string;
-  pod_last_free_day: string;
-  pod_full_out_at: string;
-  empty_terminated_at: string;
-  holds_at_pod_terminal: string;
-  available_for_pickup: string;
-  location_at_pod_terminal: string;
-  pod_vessel_name: string;
-  pod_voyage_number: string;
-};
-
-type TrackingResponse = {
-  found: boolean;
-  shipment: Shipment;
-  tracking: Tracking;
-  t49: {
-    found: boolean;
-    containers: Container[];
-  };
-};
 
 type CustomerShipment = {
   item_id: string;
@@ -171,18 +104,48 @@ async function fetchJson<T>(url: string): Promise<T> {
   throw lastError;
 }
 
-const STALE_AFTER_HOURS = 48;
+// Shipment-page lookup. Unlike fetchJson it reads the status code, because the
+// API answers with meaningful 4xx codes: 404 not_found, 400 malformed (both
+// shown as "we could not find that number"), 429 rate limited. Timeout and one
+// retry are kept for network errors, timeouts and 5xx; 4xx is never retried.
+async function lookupHbl(hbl: string): Promise<LookupResult> {
+  let lastError: Error = new Error("Something went wrong");
 
-// The Tracking board records a gate-out or empty-return without touching
-// last_update on ~26% of shipments, so last_update alone understates freshness.
-// Use the most recent milestone we actually know about. ISO date strings sort
-// lexicographically, so a plain string compare is safe here.
-function effectiveUpdate(t: Tracking): string {
-  const valid = (d: string | null | undefined): d is string =>
-    !!d && !isNaN(new Date(d + "T00:00:00").getTime());
-  const candidates = [t.last_update, t.gate_out, t.empty_return, t.delivery_date, t.inland_ata].filter(valid);
-  return candidates.length ? candidates.reduce((a, b) => (a > b ? a : b)) : "";
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      const res = await fetch(`${TRACKING_API}?hbl=${encodeURIComponent(hbl)}`, { signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS) });
+
+      if (res.status === 404 || res.status === 400) return { kind: "not_found" };
+      if (res.status === 429) return { kind: "rate_limited" };
+      if (!res.ok) throw new Error(`Request failed (${res.status})`);
+
+      const text = await res.text();
+      if (!text.trim()) throw new Error("The tracking service returned an empty response.");
+
+      let json: TrackingAnswer;
+      try {
+        json = JSON.parse(text) as TrackingAnswer;
+      } catch {
+        throw new Error("The tracking service returned an unreadable response.");
+      }
+
+      if (json.status === "tracked") return { kind: "tracked", data: json };
+      if (json.status === "setting_up") return { kind: "setting_up", hbl: json.hbl || hbl };
+      throw new Error("The tracking service returned an unexpected response.");
+    } catch (e) {
+      const err = e instanceof Error ? e : new Error(String(e));
+      lastError =
+        err.name === "TimeoutError" || err.name === "TypeError"
+          ? new Error(err.name === "TimeoutError" ? "The tracking service took too long to respond." : "We could not reach the tracking service. Check your connection and try again.")
+          : err;
+      if (attempt === 0) await new Promise((r) => setTimeout(r, 1200));
+    }
+  }
+
+  throw lastError;
 }
+
+const STALE_AFTER_HOURS = 48;
 
 function freshness(lastUpdate: string | null | undefined): { label: string; stale: boolean } | null {
   if (!lastUpdate) return null;
@@ -268,84 +231,38 @@ function Card({ title, icon: Icon, children }: { title: string; icon: React.Elem
 
 // ── HBL Tracking Components ──
 
-function TrackingStatusNote({ tracking }: { tracking: Tracking }) {
-  const hasAny = !!(
-    tracking.etd || tracking.atd || tracking.eta || tracking.ata ||
-    tracking.gate_out || tracking.delivery_date || tracking.last_update
-  );
+function TrackingStatusNote({ data }: { data: TrackedResponse }) {
+  // Finished shipments legitimately stop updating, so age is only a warning
+  // sign while the shipment is still in motion.
+  const finished = data.milestones.some((m) => m.key === "empty_returned" && m.actual);
 
-  // No milestones at all has two very different causes, and conflating them told
-  // customers that working shipments were broken:
-  //
-  //   method 'Manual'  — tracked by hand, because the consolidator won't release a
-  //                      master bill and Terminal49 cannot register a house bill.
-  //                      Dates appear when someone enters them. Nothing is wrong.
-  //   method 'Pending' — tracking hasn't started yet.
-  //   anything else    — a T49-tracked shipment with no milestones, or a method we
-  //                      couldn't read. That does suggest a real upstream failure.
-  //
-  // Only the last case is ours. Telling a customer to refresh and contact us about
-  // a correctly-recorded manual shipment manufactures a support ticket.
-  if (!hasAny) {
-    const method = (tracking.method || "").trim().toLowerCase();
-
-    if (method === "manual" || method === "pending") {
-      return (
-        <div className="flex items-start gap-2 px-3 py-2.5 rounded-lg bg-gray-50 border border-gray-200">
-          <Clock className="w-3.5 h-3.5 text-gray-400 shrink-0 mt-0.5" />
-          <p className="text-xs text-gray-500">
-            {method === "manual"
-              ? "This shipment is tracked manually, so milestone dates appear here once they're confirmed rather than updating automatically."
-              : "Tracking hasn't started for this shipment yet. Milestone dates will appear here once it's underway."}
-          </p>
-        </div>
-      );
-    }
-
-    return (
-      <div className="flex items-start gap-2 px-3 py-2.5 rounded-lg bg-amber-50 border border-amber-200">
-        <AlertTriangle className="w-3.5 h-3.5 text-amber-600 shrink-0 mt-0.5" />
-        <p className="text-xs text-amber-800">
-          We couldn't load live tracking for this shipment just now. The details below may be
-          incomplete — please refresh, or contact us if it keeps happening.
-        </p>
-      </div>
-    );
-  }
-
-  // A delivered shipment legitimately stops updating, so age is not a warning
-  // sign once the container is out and the empty is returned — only flag
-  // staleness while the shipment is still in motion.
-  const settled = !!(tracking.delivery_date || tracking.empty_return);
-  const asOf = effectiveUpdate(tracking);
-  const raw = freshness(asOf);
-  const f = raw && settled ? { ...raw, stale: false } : raw;
-
-  if (!f) {
+  if (!data.updated) {
     return (
       <div className="flex items-start gap-2 px-3 py-2.5 rounded-lg bg-gray-50 border border-gray-200">
         <Clock className="w-3.5 h-3.5 text-gray-400 shrink-0 mt-0.5" />
         <p className="text-xs text-gray-500">
-          We don't have an update time for this shipment, so these dates may have changed.
+          This shipment does not update automatically, so dates appear here once our team confirms them. Contact your Guided Imports rep for the latest.
         </p>
       </div>
     );
   }
 
+  // date_local is used only to work out how old the update is. What is shown is
+  // the server's date_display, verbatim.
+  const raw = freshness(data.updated.date_local);
+  const f = raw && finished ? { ...raw, stale: false } : raw;
+  const stale = !!f?.stale;
+
   return (
-    <div
-      className={`flex items-start gap-2 px-3 py-2.5 rounded-lg border ${
-        f.stale ? "bg-amber-50 border-amber-200" : "bg-gray-50 border-gray-200"
-      }`}
-    >
-      {f.stale ? (
+    <div className={`flex items-start gap-2 px-3 py-2.5 rounded-lg border ${stale ? "bg-amber-50 border-amber-200" : "bg-gray-50 border-gray-200"}`}>
+      {stale ? (
         <AlertTriangle className="w-3.5 h-3.5 text-amber-600 shrink-0 mt-0.5" />
       ) : (
         <Clock className="w-3.5 h-3.5 text-gray-400 shrink-0 mt-0.5" />
       )}
-      <p className={`text-xs ${f.stale ? "text-amber-800" : "text-gray-500"}`}>
-        <span className="font-semibold">{f.label}</span> · {formatDate(asOf)}
-        {f.stale && " — this shipment hasn't updated recently, so these dates may have changed."}
+      <p className={`text-xs ${stale ? "text-amber-800" : "text-gray-500"}`}>
+        <span className="font-semibold">Last updated</span> {data.updated.date_display}
+        {stale && ". This shipment has not updated recently, so these dates may have changed."}
       </p>
     </div>
   );
@@ -389,58 +306,43 @@ function routedOnward(destination: string | null | undefined, pod: string | null
   return p === null || d !== p;
 }
 
-// A shipment routed onward past the POD (e.g. Long Beach then Chicago). Both
-// halves matter: the dates can arrive before the destination is filled in, and
-// the destination can be known before any inland date exists.
-function hasInlandLeg(tracking: Tracking, shipment: Shipment): boolean {
-  return routedOnward(shipment.destination, shipment.pod) || !!(tracking.inland_eta || tracking.inland_ata);
-}
-
-function TrackingMilestones({ tracking, shipment }: { tracking: Tracking; shipment: Shipment }) {
-  const inland = hasInlandLeg(tracking, shipment);
-
-  // ORDERING CAVEAT, deliberate: the inland arrival is placed BEFORE Gate Out.
-  // That is correct for a rail move (the container rides to the destination
-  // ramp and gates out there) and wrong for a truck move (it gates out at the
-  // POD and is then trucked). We cannot tell which from the data: the Tracking
-  // board carries no per-leg mode, and the Master Shipment "Mode of Transport"
-  // field is not reliable enough to branch on. Rail is the common case for the
-  // long POD-to-inland lanes this applies to, so one order is picked and stated
-  // rather than guessed at per shipment.
-  const milestones = [
-    { label: "Departed Origin", date: formatDate(tracking.atd || tracking.etd), completed: !!tracking.atd, active: !tracking.atd && !!tracking.etd },
-    {
-      label: inland ? `Arrived at ${shipment.pod || "POD"} (port)` : `Arrived at ${shipment.pod || "POD"}`,
-      date: formatDate(tracking.ata || tracking.eta),
-      completed: !!tracking.ata,
-      active: !!tracking.atd && !tracking.ata,
-    },
-    ...(inland
-      ? [{
-          label: `Arrived at ${shipment.destination || "Destination"}`,
-          date: formatDate(tracking.inland_ata || tracking.inland_eta),
-          completed: !!tracking.inland_ata,
-          active: !!tracking.ata && !tracking.inland_ata,
-        }]
-      : []),
-    {
-      label: "Gate Out",
-      date: formatDate(tracking.gate_out),
-      completed: !!tracking.gate_out,
-      // On an inland move the gate-out is at the destination ramp, so it only
-      // becomes the live step once the container has arrived there.
-      active: inland ? !!tracking.inland_ata && !tracking.gate_out : !!tracking.ata && !tracking.gate_out,
-    },
-    { label: "Delivered", date: formatDate(tracking.delivery_date), completed: !!tracking.delivery_date, active: !!tracking.gate_out && !tracking.delivery_date },
-  ];
-
+// Milestones come from the server in order, with their own labels. Inland
+// shipments carry an extra arrived_destination step; the server decides that
+// (route.inland), this page does not compare place names.
+function TrackingMilestones({ milestones }: { milestones: TrackingMilestone[] }) {
+  const firstOpen = milestones.findIndex((m) => !m.actual);
+  const anyDone = milestones.some((m) => m.actual);
   return (
     <div className="pl-1">
       {milestones.map((m, i) => (
-        <MilestoneStep key={i} {...m} isLast={i === milestones.length - 1} />
+        <MilestoneStep
+          key={m.key}
+          label={m.label}
+          date={m.date_display || "Not yet"}
+          completed={m.actual}
+          active={i === firstOpen && (anyDone || !!m.date_display)}
+          isLast={i === milestones.length - 1}
+        />
       ))}
     </div>
   );
+}
+
+// Status is derived from the milestones that have actually happened.
+function derivedStatus(milestones: TrackingMilestone[]): string {
+  const done = (k: string) => milestones.some((m) => m.key === k && m.actual);
+  if (done("empty_returned")) return "Empty returned";
+  if (done("gate_out")) return "Picked up";
+  if (done("arrived_destination") || done("arrived_port")) return "Arrived";
+  if (done("departed_origin")) return "Departed";
+  return "";
+}
+
+function derivedStatusColor(status: string): { bg: string; text: string; dot: string } {
+  if (status === "Empty returned") return { bg: "bg-green-50", text: "text-green-700", dot: "bg-green-500" };
+  if (status === "Picked up") return { bg: "bg-teal-50", text: "text-teal-700", dot: "bg-teal-500" };
+  if (status === "Arrived") return { bg: "bg-teal-50", text: "text-teal-700", dot: "bg-teal-500" };
+  return { bg: "bg-blue-50", text: "text-blue-700", dot: "bg-blue-500" };
 }
 
 function SearchPage({ onSearch }: { onSearch: (hbl: string) => void }) {
@@ -518,17 +420,13 @@ function SearchPage({ onSearch }: { onSearch: (hbl: string) => void }) {
   );
 }
 
-function ResultsPage({ data, hbl, onBack }: { data: TrackingResponse; hbl: string; onBack: () => void }) {
-  const { shipment, tracking, t49 } = data;
-
-  // The Monday Tracking board is now the deduplicated canonical source (owned by
-  // the new tracking service). The raw Terminal49 DataSync sheet below is NOT
-  // deduplicated: a re-booked container has several T49 objects sharing one HBL,
-  // and the lookup can surface a stale/dead one (e.g. an old ETA the customer
-  // misreads as an arrival). So when Monday has tracking data, trust it and
-  // suppress the raw T49 block; only fall back to that block when Monday has no
-  // tracking at all, so a shipment missing its board link still shows something.
-  const hasMondayTracking = !!(tracking.etd || tracking.atd || tracking.eta || tracking.ata);
+function ResultsPage({ data, hbl, onBack }: { data: TrackedResponse; hbl: string; onBack: () => void }) {
+  const status = derivedStatus(data.milestones);
+  const sc = derivedStatusColor(status);
+  const lfd = data.details.last_free_day;
+  const holds = data.details.holds && data.details.holds.length > 0 ? data.details.holds.join(", ") : null;
+  const available = data.details.available_for_pickup === null ? null : data.details.available_for_pickup ? "Yes" : "No";
+  const shownDestination = data.route.destination || data.route.port;
 
   return (
     <div className="flex-1 px-4 py-6 sm:py-8">
@@ -538,17 +436,21 @@ function ResultsPage({ data, hbl, onBack }: { data: TrackingResponse; hbl: strin
             <ArrowLeft className="w-4 h-4 text-gray-600" />
           </button>
           <div className="flex-1">
-            <h1 className="text-lg font-bold text-[#1B2A4A]">{shipment.hbl || hbl}</h1>
-            <p className="text-xs text-gray-500">{shipment.name}</p>
+            <h1 className="text-lg font-bold text-[#1B2A4A]">{data.hbl || hbl}</h1>
           </div>
-          <StatusBadge status={displayStatus(shipment.status, tracking)} />
+          {status && (
+            <span className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-semibold ${sc.bg} ${sc.text}`}>
+              <span className={`w-1.5 h-1.5 rounded-full ${sc.dot}`} />
+              {status}
+            </span>
+          )}
         </div>
 
         <div className="bg-gradient-to-br from-[#1B2A4A] to-[#131F36] rounded-xl p-5 text-white">
           <div className="flex items-center justify-between gap-4">
             <div className="text-center flex-1">
               <p className="text-xs text-gray-400 font-medium mb-1">Origin</p>
-              <p className="text-base font-bold">{shipment.pol || "—"}</p>
+              <p className="text-base font-bold">{data.route.origin || "Not yet"}</p>
             </div>
             <div className="flex-1 flex items-center gap-2">
               <div className="flex-1 h-px bg-white/20" />
@@ -557,81 +459,46 @@ function ResultsPage({ data, hbl, onBack }: { data: TrackingResponse; hbl: strin
             </div>
             <div className="text-center flex-1">
               <p className="text-xs text-gray-400 font-medium mb-1">Destination</p>
-              <p className="text-base font-bold">{shipment.destination || shipment.pod || "—"}</p>
+              <p className="text-base font-bold">{shownDestination || "Not yet"}</p>
             </div>
           </div>
           <div className="flex items-center justify-center gap-6 mt-4 pt-4 border-t border-white/10 text-xs text-gray-300">
-            {shipment.vessel && (
+            {data.vessel && (
               <span className="flex items-center gap-1.5">
                 <Anchor className="w-3 h-3" />
-                {shipment.vessel} {shipment.voyage && `/ ${shipment.voyage}`}
+                {data.vessel} {data.voyage && `/ ${data.voyage}`}
               </span>
             )}
-            {shipment.ssl && <span>{shipment.ssl}</span>}
-            {shipment.mode && <span className="px-2 py-0.5 bg-white/10 rounded-full">{shipment.mode}</span>}
+            {data.carrier && <span>{data.carrier}</span>}
           </div>
         </div>
 
-        <TrackingStatusNote tracking={tracking} />
+        <TrackingStatusNote data={data} />
 
-        {(tracking.etd || tracking.atd) && (
-          <Card title="Tracking Progress" icon={MapPin}>
-            <TrackingMilestones tracking={tracking} shipment={shipment} />
-          </Card>
-        )}
+        <Card title="Tracking Progress" icon={MapPin}>
+          <TrackingMilestones milestones={data.milestones} />
+        </Card>
 
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-5">
           <Card title="Dates" icon={Clock}>
-            <InfoRow label="ETD" value={formatDate(tracking.etd)} />
-            <InfoRow label="ATD" value={formatDate(tracking.atd)} />
-            <InfoRow label={hasInlandLeg(tracking, shipment) ? "ETA (port)" : "ETA"} value={formatDate(tracking.eta)} />
-            <InfoRow label={hasInlandLeg(tracking, shipment) ? "ATA (port)" : "ATA"} value={formatDate(tracking.ata)} />
-            {tracking.inland_eta && <InfoRow label={`ETA ${shipment.destination || "Destination"}`} value={formatDate(tracking.inland_eta)} />}
-            {tracking.inland_ata && <InfoRow label={`ATA ${shipment.destination || "Destination"}`} value={formatDate(tracking.inland_ata)} />}
-            {/* The Last Free Day we hold is usually the POD's; on a rail move it
-                can be the inland ramp's, but the lookup carries no scope to tell
-                them apart. For a container routed onward the POD's deadline is
-                not the customer's, and showing it invites exactly the wrong
-                action, so it is withheld until the container has actually
-                arrived at the destination. Same rule as NOTIF-03 applies to the
-                LFD emails. */}
-            {tracking.lfd && !(hasInlandLeg(tracking, shipment) && !tracking.inland_ata) && (
-              <InfoRow label="Last Free Day" value={formatDate(tracking.lfd)} />
-            )}
-            {tracking.delivery_date && <InfoRow label="Delivery" value={formatDate(tracking.delivery_date)} />}
+            {data.milestones.map((m, i) => (
+              <InfoRow
+                key={m.key}
+                label={m.actual || !m.date_display ? m.label : `${m.label} (expected)`}
+                value={m.date_display || "Not yet"}
+              />
+            ))}
+            {lfd && <InfoRow label={`Last Free Day (${lfd.place})`} value={lfd.date_display} />}
           </Card>
 
           <Card title="Shipment Details" icon={Package}>
-            <InfoRow label="HBL" value={shipment.hbl} />
-            <InfoRow label="Container" value={shipment.container_number} />
-            <InfoRow label="Incoterm" value={shipment.incoterm} />
-            {tracking.available_for_pickup && <InfoRow label="Available" value={tracking.available_for_pickup} />}
-            {tracking.holds && <InfoRow label="Holds" value={tracking.holds} />}
-            {tracking.terminal_location && <InfoRow label="Terminal" value={tracking.terminal_location} />}
+            <InfoRow label="HBL" value={data.hbl} />
+            <InfoRow label="Container" value={data.containers.length ? data.containers.join(", ") : "Not yet"} />
+            {available && <InfoRow label="Available" value={available} />}
+            {holds && <InfoRow label="Holds" value={holds} />}
+            {data.details.terminal_location && <InfoRow label="Terminal" value={data.details.terminal_location} />}
           </Card>
         </div>
-
-        {!hasMondayTracking && t49.found && t49.containers.length > 0 && (
-          <Card title="Container Tracking" icon={Truck}>
-            {t49.containers.map((c, i) => (
-              <div key={i} className={i > 0 ? "mt-4 pt-4 border-t border-gray-100" : ""}>
-                <p className="text-sm font-bold text-gray-800 mb-3">{c.container_number}</p>
-                <div className="grid grid-cols-2 gap-x-6">
-                  <InfoRow label="Departed" value={formatDate(c.pol_atd_at)} />
-                  <InfoRow label="ETA" value={formatDate(c.pod_eta_at)} />
-                  <InfoRow label="Arrived" value={formatDate(c.pod_arrived_at)} />
-                  <InfoRow label="Discharged" value={formatDate(c.pod_discharged_at)} />
-                  <InfoRow label="Last Free Day" value={formatDate(c.pod_last_free_day)} />
-                  <InfoRow label="Gate Out" value={formatDate(c.pod_full_out_at)} />
-                  {c.holds_at_pod_terminal && <InfoRow label="Holds" value={c.holds_at_pod_terminal} />}
-                  {c.available_for_pickup && <InfoRow label="Available" value={c.available_for_pickup} />}
-                  {c.location_at_pod_terminal && <InfoRow label="Location" value={c.location_at_pod_terminal} />}
-                  {c.equipment && <InfoRow label="Equipment" value={c.equipment} />}
-                </div>
-              </div>
-            ))}
-          </Card>
-        )}
 
         <div className="text-center pb-4">
           <p className="text-xs text-gray-400">
@@ -641,6 +508,29 @@ function ResultsPage({ data, hbl, onBack }: { data: TrackingResponse; hbl: strin
             </a>
           </p>
         </div>
+      </div>
+    </div>
+  );
+}
+
+function SettingUpPage({ hbl, onBack }: { hbl: string; onBack: () => void }) {
+  return (
+    <div className="flex-1 flex items-center justify-center px-4">
+      <div className="text-center space-y-4 max-w-sm">
+        <div className="w-14 h-14 rounded-full bg-gray-100 flex items-center justify-center mx-auto">
+          <Clock className="w-6 h-6 text-gray-500" />
+        </div>
+        <h2 className="text-lg font-bold text-gray-800">{hbl}</h2>
+        <p className="text-sm text-gray-500">Tracking for this shipment is being set up. Please contact your Guided Imports rep.</p>
+        <p className="text-xs text-gray-400">
+          Or email{" "}
+          <a href="mailto:track-trace@guidedimports.com" className="text-[#4CAF50] font-semibold hover:text-[#43A047]">
+            track-trace@guidedimports.com
+          </a>
+        </p>
+        <button onClick={onBack} className="px-6 py-2.5 bg-[#1B2A4A] text-white text-sm font-bold rounded-xl hover:bg-[#131F36] transition">
+          Back
+        </button>
       </div>
     </div>
   );
@@ -967,8 +857,8 @@ function parseRoute(): Route {
 }
 
 export default function App() {
-  const [state, setState] = useState<"search" | "loading" | "results" | "error" | "not_found" | "customer">("search");
-  const [data, setData] = useState<TrackingResponse | null>(null);
+  const [state, setState] = useState<"search" | "loading" | "results" | "setting_up" | "error" | "not_found" | "customer">("search");
+  const [data, setData] = useState<TrackedResponse | null>(null);
   const [searchHbl, setSearchHbl] = useState("");
   const [error, setError] = useState("");
   const [customerToken, setCustomerToken] = useState("");
@@ -982,16 +872,23 @@ export default function App() {
     window.history.replaceState(null, "", `/tracking/${encodeURIComponent(hbl)}`);
 
     try {
-      const json = await fetchJson<TrackingResponse>(
-        `${N8N_HBL_WEBHOOK}?hbl=${encodeURIComponent(hbl)}`
-      );
+      const result = await lookupHbl(hbl);
 
-      if (!json.found) {
+      if (result.kind === "not_found") {
         setState("not_found");
         return;
       }
+      if (result.kind === "rate_limited") {
+        setError("Too many lookups from this connection. Please wait a few minutes and try again.");
+        setState("error");
+        return;
+      }
+      if (result.kind === "setting_up") {
+        setState("setting_up");
+        return;
+      }
 
-      setData(json);
+      setData(result.data);
       setState("results");
     } catch (e) {
       setError(e instanceof Error ? e.message : "Something went wrong");
@@ -1036,6 +933,8 @@ export default function App() {
         <ResultsPage data={data} hbl={searchHbl} onBack={handleBack} />
       )}
 
+      {state === "setting_up" && <SettingUpPage hbl={searchHbl} onBack={handleBack} />}
+
       {state === "customer" && customerToken && (
         <CustomerPortalPage token={customerToken} />
       )}
@@ -1048,7 +947,7 @@ export default function App() {
             </div>
             <h2 className="text-lg font-bold text-gray-800">Shipment Not Found</h2>
             <p className="text-sm text-gray-500">
-              We couldn't find a shipment with HBL <span className="font-semibold text-gray-700">{searchHbl}</span>. Please check the number and try again.
+              We could not find that number. Check your House Bill of Lading number and try again, or contact your Guided Imports rep.
             </p>
             <button onClick={handleBack} className="px-6 py-2.5 bg-[#1B2A4A] text-white text-sm font-bold rounded-xl hover:bg-[#131F36] transition">
               Try Again
