@@ -1,0 +1,63 @@
+{
+  "status": "tracked",
+  "hbl": "AHMS26100133B",
+  "route": {
+    "origin": "Yantian",
+    "port": "Vancouver",
+    "destination": "Calgary",
+    "inland": true
+  },
+  "vessel": "OOCL NEW YORK",
+  "voyage": "123E",
+  "carrier": "EVERGREEN",
+  "containers": [
+    "EGHU9247951"
+  ],
+  "milestones": [
+    {
+      "key": "departed_origin",
+      "label": "Departed origin",
+      "date_display": "Nov 6, 2026",
+      "date_local": "2026-11-06",
+      "actual": true
+    },
+    {
+      "key": "arrived_port",
+      "label": "Arrived at port",
+      "date_display": "Nov 25, 2026",
+      "date_local": "2026-11-25",
+      "actual": true
+    },
+    {
+      "key": "arrived_destination",
+      "label": "Arrived at destination",
+      "date_display": "Nov 29, 2026",
+      "date_local": "2026-11-29",
+      "actual": false
+    },
+    {
+      "key": "gate_out",
+      "label": "Picked up",
+      "date_display": null,
+      "date_local": null,
+      "actual": false
+    },
+    {
+      "key": "empty_returned",
+      "label": "Empty returned",
+      "date_display": null,
+      "date_local": null,
+      "actual": false
+    }
+  ],
+  "details": {
+    "last_free_day": null,
+    "available_for_pickup": null,
+    "holds": [],
+    "terminal_location": "YARD"
+  },
+  "updated": {
+    "date_display": "Nov 25, 2026",
+    "date_local": "2026-11-25"
+  }
+}

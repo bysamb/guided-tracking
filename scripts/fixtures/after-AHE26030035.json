@@ -1,4 +1,51 @@
 {
- "status": "setting_up",
- "hbl": "AHE26030035"
+  "status": "tracked",
+  "hbl": "AHE26030035",
+  "route": {
+    "origin": "",
+    "port": "",
+    "destination": null,
+    "inland": false
+  },
+  "vessel": null,
+  "voyage": null,
+  "carrier": "UNITED PARCEL SERVICE (UPS)",
+  "containers": [],
+  "milestones": [
+    {
+      "key": "departed_origin",
+      "label": "Departed origin",
+      "date_display": "Apr 8, 2026",
+      "date_local": "2026-04-08",
+      "actual": true
+    },
+    {
+      "key": "arrived_port",
+      "label": "Arrived at port",
+      "date_display": "Apr 9, 2026",
+      "date_local": "2026-04-09",
+      "actual": false
+    },
+    {
+      "key": "gate_out",
+      "label": "Picked up",
+      "date_display": null,
+      "date_local": null,
+      "actual": false
+    },
+    {
+      "key": "empty_returned",
+      "label": "Empty returned",
+      "date_display": null,
+      "date_local": null,
+      "actual": false
+    }
+  ],
+  "details": {
+    "last_free_day": null,
+    "available_for_pickup": null,
+    "holds": null,
+    "terminal_location": null
+  },
+  "updated": null
 }

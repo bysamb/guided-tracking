@@ -1,59 +1,59 @@
 {
- "status": "tracked",
- "hbl": "AHMS26010094",
- "route": {
-  "origin": "Shanghai",
-  "port": "New York / New Jersey",
-  "destination": null,
-  "inland": false
- },
- "vessel": "WAN HAI A08",
- "voyage": "E015",
- "carrier": "Wan Hai Lines (WHL)",
- "containers": [
-  "TIIU6367507"
- ],
- "milestones": [
-  {
-   "key": "departed_origin",
-   "label": "Departed Origin",
-   "date_display": "Jan 26, 2026",
-   "date_local": "2026-01-26",
-   "actual": true
+  "status": "tracked",
+  "hbl": "AHMS26010094",
+  "route": {
+    "origin": "Shanghai",
+    "port": "New York / New Jersey",
+    "destination": null,
+    "inland": false
   },
-  {
-   "key": "arrived_port",
-   "label": "Arrived at New York / New Jersey",
-   "date_display": "Mar 19, 2026",
-   "date_local": "2026-03-19",
-   "actual": true
+  "vessel": "WAN HAI A08",
+  "voyage": "E015",
+  "carrier": "WAN HAI LINES (WHL)",
+  "containers": [
+    "TIIU6367507"
+  ],
+  "milestones": [
+    {
+      "key": "departed_origin",
+      "label": "Departed origin",
+      "date_display": "Jan 26, 2026",
+      "date_local": "2026-01-26",
+      "actual": true
+    },
+    {
+      "key": "arrived_port",
+      "label": "Arrived at port",
+      "date_display": "Mar 19, 2026",
+      "date_local": "2026-03-19",
+      "actual": true
+    },
+    {
+      "key": "gate_out",
+      "label": "Picked up",
+      "date_display": "Mar 25, 2026",
+      "date_local": "2026-03-25",
+      "actual": true
+    },
+    {
+      "key": "empty_returned",
+      "label": "Empty returned",
+      "date_display": null,
+      "date_local": null,
+      "actual": false
+    }
+  ],
+  "details": {
+    "last_free_day": {
+      "date_display": "Mar 26, 2026",
+      "place": "New York / New Jersey"
+    },
+    "available_for_pickup": null,
+    "holds": [],
+    "terminal_location": "COMMUNITY - OUT"
   },
-  {
-   "key": "gate_out",
-   "label": "Gate Out",
-   "date_display": "Mar 25, 2026",
-   "date_local": "2026-03-25",
-   "actual": true
-  },
-  {
-   "key": "empty_returned",
-   "label": "Empty Returned",
-   "date_display": null,
-   "date_local": null,
-   "actual": false
+  "updated": {
+    "date_display": "Mar 25, 2026",
+    "date_local": "2026-03-25"
   }
- ],
- "details": {
-  "last_free_day": {
-   "date_display": "Mar 26, 2026",
-   "place": "New York / New Jersey"
-  },
-  "available_for_pickup": null,
-  "holds": [],
-  "terminal_location": "COMMUNITY - OUT"
- },
- "updated": {
-  "date_display": "Mar 25, 2026",
-  "date_local": "2026-03-25"
- }
 }
