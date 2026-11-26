@@ -4,3 +4,4 @@ dist
 scripts/out
 dist-stub
 dist-live
+dist-live-payloads

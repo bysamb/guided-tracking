@@ -1,0 +1,59 @@
+{
+  "status": "tracked",
+  "hbl": "AHMS26090074",
+  "route": {
+    "origin": "Ningbo",
+    "port": "Tampa",
+    "destination": null,
+    "inland": false
+  },
+  "vessel": "MSC ANTONELLA",
+  "voyage": "GN643W",
+  "carrier": "MEDITERRANEAN SHIPPING COMPANY (MSC)",
+  "containers": [
+    "MSNU8840147"
+  ],
+  "milestones": [
+    {
+      "key": "departed_origin",
+      "label": "Departed origin",
+      "date_display": "Oct 4, 2026",
+      "date_local": "2026-10-04",
+      "actual": true
+    },
+    {
+      "key": "arrived_port",
+      "label": "Arrived at port",
+      "date_display": "Nov 18, 2026",
+      "date_local": "2026-11-18",
+      "actual": true
+    },
+    {
+      "key": "gate_out",
+      "label": "Picked up",
+      "date_display": "Nov 24, 2026",
+      "date_local": "2026-11-24",
+      "actual": true
+    },
+    {
+      "key": "empty_returned",
+      "label": "Empty returned",
+      "date_display": "Nov 25, 2026",
+      "date_local": "2026-11-25",
+      "actual": true
+    }
+  ],
+  "details": {
+    "last_free_day": {
+      "date_display": "Nov 24, 2026",
+      "place": "Tampa"
+    },
+    "available_for_pickup": null,
+    "holds": [],
+    "terminal_location": "Community"
+  },
+  "updated": {
+    "date_display": "Nov 24, 2026",
+    "date_local": "2026-11-24"
+  }
+}

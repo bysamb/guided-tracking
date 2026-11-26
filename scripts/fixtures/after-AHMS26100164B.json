@@ -1,0 +1,56 @@
+{
+  "status": "tracked",
+  "hbl": "AHMS26100164B",
+  "route": {
+    "origin": "Yantian",
+    "port": "Long Beach",
+    "destination": null,
+    "inland": false
+  },
+  "vessel": "OOCL EUROPE",
+  "voyage": "215E",
+  "carrier": "COSCO",
+  "containers": [
+    "BEAU5771610"
+  ],
+  "milestones": [
+    {
+      "key": "departed_origin",
+      "label": "Departed origin",
+      "date_display": "Nov 10, 2026",
+      "date_local": "2026-11-10",
+      "actual": true
+    },
+    {
+      "key": "arrived_port",
+      "label": "Arrived at port",
+      "date_display": "Nov 25, 2026",
+      "date_local": "2026-11-25",
+      "actual": true
+    },
+    {
+      "key": "gate_out",
+      "label": "Picked up",
+      "date_display": null,
+      "date_local": null,
+      "actual": false
+    },
+    {
+      "key": "empty_returned",
+      "label": "Empty returned",
+      "date_display": null,
+      "date_local": null,
+      "actual": false
+    }
+  ],
+  "details": {
+    "last_free_day": null,
+    "available_for_pickup": null,
+    "holds": [],
+    "terminal_location": "ON VESSEL"
+  },
+  "updated": {
+    "date_display": "Nov 25, 2026",
+    "date_local": "2026-11-25"
+  }
+}
